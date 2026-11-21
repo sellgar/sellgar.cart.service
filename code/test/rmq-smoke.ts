@@ -173,7 +173,7 @@ async function smoke(): Promise<void> {
       const event = {
         eventUuid: randomUUID(),
         eventType,
-        producer: kind === 'product' ? 'product_srv_v2' : kind === 'shop' ? 'shop_srv' : 'store_srv',
+        producer: kind === 'product' ? 'product_srv' : kind === 'shop' ? 'shop_srv' : 'store_srv',
         schemaVersion: kind === 'record_inventory' ? 2 : 3,
         aggregateType: kind,
         aggregateUuid: payload.uuid,

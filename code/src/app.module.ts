@@ -31,7 +31,7 @@ import {
 
 const clients = [
   { name: SOURCE_STORE, queue: 'AMQP_STORE_SRV_COMMAND_QUEUE' },
-  { name: SOURCE_PRODUCT, queue: 'PRODUCT_V2_COMMAND_QUEUE' },
+  { name: SOURCE_PRODUCT, queue: 'PRODUCT_COMMAND_QUEUE' },
   { name: SOURCE_SHOP, queue: 'AMQP_SHOP_SRV_COMMAND_QUEUE' },
   { name: CART_OUTBOX_OPTIONS.eventClientToken, queue: null },
 ];

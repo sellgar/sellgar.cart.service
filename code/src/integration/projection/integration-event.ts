@@ -32,7 +32,7 @@ export const sources = {
     events: ['shop.created', 'shop.updated'],
   },
   product: {
-    producer: 'product_srv_v2',
+    producer: 'product_srv',
     schemaVersion: 3,
     type: ProductPayloadDto,
     events: ['product.created', 'product.updated'],

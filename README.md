@@ -177,7 +177,7 @@ Unavailable rows сохраняются через LEFT JOIN; отсутстви
 ## Проекции и восстановление
 
 Подписки: Store `store.product.created/updated/archived`, `store.inventory.updated`
-(schemaVersion=2/3); Product `product.created/updated` (producer=product_srv_v2,
+(schemaVersion=2/3); Product `product.created/updated` (producer=product_srv,
 schemaVersion=3); Shop `shop.created/updated` (schemaVersion=3).
 Принимаются оба используемых владельцами имени aggregateId/aggregateUuid, внутреннее
 имя — aggregateUuid. Проверяются producer, schema, identity, версия и связи payload.
