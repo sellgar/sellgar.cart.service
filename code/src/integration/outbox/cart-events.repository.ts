@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { OutboxWriter } from '@sellgar/outbox';
 import { EntityManager } from 'typeorm';
 
-import { CartRow } from '../../api/v1/cart/entity/cart-view.entity';
+import { CartRow } from '../../api/v1/cart/entity/cart-row.entity';
 
 @Injectable()
 export class CartEventsRepository {

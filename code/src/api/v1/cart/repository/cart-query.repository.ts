@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager } from 'typeorm';
 
-import { CartLineRow, CartRow, CartView } from '../entity/cart-view.entity';
+import { CartLineRow } from '../entity/cart-line-row.entity';
+import { CartRow } from '../entity/cart-row.entity';
+import { CartView } from '../entity/cart-view.entity';
 import { cartItemView } from '../service/cart-availability';
 import { sumPrices } from '../service/money';
 

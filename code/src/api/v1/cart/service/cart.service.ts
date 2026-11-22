@@ -13,7 +13,7 @@ import {
   RemoveCartItemDto,
   SetCartItemDto,
 } from '../controller/dto/cart.dto';
-import { CartRow } from '../entity/cart-view.entity';
+import { CartRow } from '../entity/cart-row.entity';
 import { CartCommandRepository } from '../repository/cart-command.repository';
 import { CartQueryRepository } from '../repository/cart-query.repository';
 import { CartRepository } from '../repository/cart.repository';

@@ -11,7 +11,7 @@ import { EntityManager } from 'typeorm';
 import { rows } from '../../../../common/database';
 import { CartEventsRepository } from '../../../../integration/outbox/cart-events.repository';
 import { CartScopeDto } from '../controller/dto/cart.dto';
-import { CartRow } from '../entity/cart-view.entity';
+import { CartRow } from '../entity/cart-row.entity';
 
 @Injectable()
 export class CartRepository {

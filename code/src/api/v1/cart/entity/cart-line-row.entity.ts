@@ -1,0 +1,33 @@
+export interface CartLineRow {
+  record_uuid: string;
+  quantity: number;
+  version: string;
+  checkout_uuid: string | null;
+  record_exists: boolean;
+  article: string | null;
+  clarifications: string[] | null;
+  offer_uuid: string | null;
+  store_product_uuid: string | null;
+  product_uuid: string | null;
+  variant_uuid: string | null;
+  product_name: string | null;
+  variant_name: string | null;
+  image_uuid: string | null;
+  product_status: string | null;
+  variant_status: string | null;
+  store_product_status: string | null;
+  offer_status: string | null;
+  product_showing: boolean | null;
+  offer_showing: boolean | null;
+  price_uuid: string | null;
+  price_value: string | null;
+  currency_code: string | null;
+  available: number | null;
+  shop_uuid: string | null;
+  shop_name: string | null;
+  shop_version: number | null;
+  product_version: number | null;
+  store_version: number | null;
+  inventory_version: number | null;
+  sync_pending: boolean;
+}

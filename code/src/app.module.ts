@@ -1,10 +1,12 @@
-import { HealthModule } from './health/health.module';
+import { PaginationModule } from '@sellgar/pagination';
 import { Module } from '@nestjs/common';
-import { IdentityEventsController } from './integration/identity/identity-events.controller';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { OutboxModule } from '@sellgar/outbox';
 
+import { HealthModule } from './health/health.module';
+import { IdentityEventsController } from './integration/identity/identity-events.controller';
 import { CartController } from './api/v1/cart/controller/cart.controller';
 import { CartAdminController } from './api/v1/cart/controller/cart-admin.controller';
 import { CartAdminQueryRepository } from './api/v1/cart/repository/cart-admin-query.repository';
@@ -17,7 +19,6 @@ import { CartService } from './api/v1/cart/service/cart.service';
 import { CartDatabaseOptions } from './database/cart-database.options';
 import { OrderEventsController } from './integration/order/order-events.controller';
 import { CartEventsRepository } from './integration/outbox/cart-events.repository';
-import { OutboxModule } from '@sellgar/outbox';
 import { CART_OUTBOX_OPTIONS } from './integration/outbox/cart-outbox.options';
 import { ProjectionController } from './integration/projection/projection.controller';
 import { ProjectionService } from './integration/projection/projection.service';
@@ -38,6 +39,7 @@ const clients = [
 
 @Module({
   imports: [
+    PaginationModule,
     HealthModule,
     ConfigModule.forRoot({
       isGlobal: true,

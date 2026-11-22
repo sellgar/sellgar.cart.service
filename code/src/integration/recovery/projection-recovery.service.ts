@@ -1,9 +1,10 @@
-import { legacyStoreSnapshot, storePayload } from '../projection/store-payload';
+import { CursorPage } from '@sellgar/pagination';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
+import { legacyStoreSnapshot, storePayload } from '../projection/store-payload';
 import { ProjectionKind } from '../projection/integration-event';
 import { ProjectionService } from '../projection/projection.service';
 import { SourceGateway } from './source.gateway';
@@ -53,19 +54,43 @@ export class ProjectionRecoveryService implements OnModuleInit, OnModuleDestroy 
   }
 
   async bootstrap(): Promise<{ products: number }> {
-    for (let offset = 0; !this.stopped; offset += 100) {
-      const page = await this.gateway.allShops(offset);
-      if (!Array.isArray(page?.data)) throw new Error('Invalid Shop bootstrap response');
-      for (const shop of page.data) await this.projections.synchronize('shop', shop);
-      if (page.data.length < 100) break;
+    await this.visitPages(
+      (token) => this.gateway.allShops(token),
+      (shop) => this.projections.synchronize('shop', shop),
+    );
+    const products = await this.visitPages(
+      (token) => this.gateway.allStoreProducts(token),
+      (product) => this.storeProduct(product),
+    );
+    return { products };
+  }
+
+  private async visitPages(
+    load: (token?: string) => Promise<CursorPage<any>>,
+    consume: (item: any) => Promise<unknown>,
+  ): Promise<number> {
+    const seen = new Set<string>();
+    let nextToken: string | undefined;
+    let count = 0;
+    while (!this.stopped) {
+      const page = await load(nextToken);
+      const token = page?.meta?.nextToken;
+      if (
+        !Array.isArray(page.items) ||
+        (token !== null && (typeof token !== 'string' || token.length === 0 || seen.has(token)))
+      ) {
+        throw new Error('Invalid cursor page from bootstrap source');
+      }
+      for (const item of page.items) {
+        if (this.stopped) break;
+        await consume(item);
+        count += 1;
+      }
+      if (token === null) break;
+      seen.add(token);
+      nextToken = token;
     }
-    const result = await this.gateway.allStoreProducts();
-    if (!Array.isArray(result?.data)) throw new Error('Invalid Store bootstrap response');
-    for (const product of result.data) {
-      if (this.stopped) break;
-      await this.storeProduct(product);
-    }
-    return { products: result.data.length };
+    return count;
   }
 
   async recover(): Promise<void> {

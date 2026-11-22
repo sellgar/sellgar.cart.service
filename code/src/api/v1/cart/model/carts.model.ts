@@ -1,6 +1,9 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity('carts')
+@Index('carts_cursor_idx', { synchronize: false })
+@Index('carts_owner_cursor_idx', { synchronize: false })
+@Index('carts_shop_cursor_idx', { synchronize: false })
 export class CartModel {
   @PrimaryColumn({ name: 'uuid', type: 'uuid' })
   uuid: string;

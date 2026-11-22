@@ -1,4 +1,6 @@
-import { CartItemView, CartLineRow, Unavailability } from '../entity/cart-view.entity';
+import { CartItemView } from '../entity/cart-item-view.entity';
+import { CartLineRow } from '../entity/cart-line-row.entity';
+import { Unavailability } from '../entity/unavailability.entity';
 import { multiplyPrice } from './money';
 
 const messages: Record<Unavailability, string> = {

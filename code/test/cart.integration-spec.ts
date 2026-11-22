@@ -1,14 +1,17 @@
+import 'reflect-metadata';
+
+import { CursorPagination } from '@sellgar/pagination';
 import { OutboxWriter } from '@sellgar/outbox';
 import { ConfigService } from '@nestjs/config';
-import { CART_OUTBOX_OPTIONS } from '../src/integration/outbox/cart-outbox.options';
-import 'reflect-metadata';
 import { existsSync, readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { RmqContext } from '@nestjs/microservices';
 import { DataSource } from 'typeorm';
+import { OutboxRepository } from '@sellgar/outbox';
 
+import { CART_OUTBOX_OPTIONS } from '../src/integration/outbox/cart-outbox.options';
 import { CartDatabaseOptions } from '../src/database/cart-database.options';
 import { CartCommandRepository } from '../src/api/v1/cart/repository/cart-command.repository';
 import { CartRepository } from '../src/api/v1/cart/repository/cart.repository';
@@ -22,7 +25,6 @@ import { CartEventsRepository } from '../src/integration/outbox/cart-events.repo
 import { ProjectionService } from '../src/integration/projection/projection.service';
 import { ProjectionRecoveryService } from '../src/integration/recovery/projection-recovery.service';
 import { SourceGateway } from '../src/integration/recovery/source.gateway';
-import { OutboxRepository } from '@sellgar/outbox';
 import { OrderEventsController } from '../src/integration/order/order-events.controller';
 
 if (existsSync('.env')) {
@@ -161,7 +163,11 @@ describe('Cart PostgreSQL invariants', () => {
       config,
     );
     checkouts = new CartCheckoutService(commands, repository, query, events, config);
-    admin = new CartAdminService(db, new CartAdminQueryRepository(query), carts);
+    admin = new CartAdminService(
+      db,
+      new CartAdminQueryRepository(query, new CursorPagination('test-pagination-key-at-least-32-bytes')),
+      carts,
+    );
     projections = new ProjectionService(db, events);
   });
 
@@ -650,25 +656,30 @@ describe('Cart PostgreSQL invariants', () => {
     stock.assertStock.mockClear();
     const query = (input: Partial<GetAllCartsDto>) => Object.assign(new GetAllCartsDto(), input);
     const page = await admin.getAll(query({ ownerUuid: fixture.ownerUuid, limit: 1 }));
-    const second = await admin.getAll(query({ ownerUuid: fixture.ownerUuid, limit: 1, offset: 1 }));
-    expect(page.meta).toEqual({ totalRows: 2, limit: 1, offset: 0 });
-    expect(second.data[0].uuid).not.toBe(page.data[0].uuid);
+    const second = await admin.getAll(
+      query({ ownerUuid: fixture.ownerUuid, limit: 1, nextToken: page.meta.nextToken! }),
+    );
+    expect(page.meta).toEqual({ limit: 1, nextToken: expect.any(String) });
+    expect(second.meta.nextToken).toBeNull();
+    expect(second.items[0].uuid).not.toBe(page.items[0].uuid);
     const filtered = await admin.getAll(
       query({ ownerUuid: fixture.ownerUuid, shopUuid: fixture.shopUuid, status: 'active' }),
     );
-    expect(filtered.data).toHaveLength(1);
-    expect(filtered.data[0]).toMatchObject({
+    expect(filtered.items).toHaveLength(1);
+    expect(filtered.items[0]).toMatchObject({
       uuid: first.uuid,
       ownerUuid: fixture.ownerUuid,
       itemsCount: 1,
       closedAt: null,
       shop: { uuid: fixture.shopUuid, name: 'Центр' },
     });
-    expect((await admin.getAll(query({ ownerUuid: otherOwner, status: 'active' }))).meta.totalRows).toBe(0);
-    expect((await admin.getAll(query({ ownerUuid: otherOwner, status: 'closed' }))).data[0].uuid).toBe(
+    expect((await admin.getAll(query({ ownerUuid: otherOwner, status: 'active' }))).items.length).toBe(0);
+    expect((await admin.getAll(query({ ownerUuid: otherOwner, status: 'closed' }))).items[0].uuid).toBe(
       closed.uuid,
     );
-    expect((await admin.getAll(query({ ownerUuid: fixture.ownerUuid, offset: 100 }))).meta.totalRows).toBe(2);
+    await expect(
+      admin.getAll(query({ ownerUuid: fixture.ownerUuid, nextToken: 'invalid' })),
+    ).rejects.toThrow();
     const detail = await admin.getByUuid(closed.uuid);
     expect(detail.closedAt).not.toBeNull();
     expect(detail.items[0].productName).toBe('Кофе');

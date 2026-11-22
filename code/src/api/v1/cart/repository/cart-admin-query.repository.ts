@@ -1,39 +1,59 @@
+import { CursorPagination } from '@sellgar/pagination';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 
+import { CartModel } from '../model/carts.model';
 import { GetAllCartsDto } from '../controller/dto/get-all-carts.dto';
-import { CartAdminMetadata, CartAdminPage, CartAdminView } from '../entity/cart-admin.entity';
-import { CartRow } from '../entity/cart-view.entity';
+import { CartAdminMetadata } from '../entity/cart-admin-metadata.entity';
+import { CartAdminPage } from '../entity/cart-admin-page.entity';
+import { CartAdminView } from '../entity/cart-admin-view.entity';
+import { CartRow } from '../entity/cart-row.entity';
 import { CartQueryRepository } from './cart-query.repository';
 import { CartScopeDto } from '../controller/dto/cart.dto';
 
 @Injectable()
 export class CartAdminQueryRepository {
-  constructor(private readonly queries: CartQueryRepository) {}
+  constructor(
+    private readonly queries: CartQueryRepository,
+    private readonly pagination: CursorPagination,
+  ) {}
 
   async getAll(manager: EntityManager, query: GetAllCartsDto): Promise<CartAdminPage> {
-    const parameters = [query.shopUuid ?? null, query.ownerUuid ?? null, query.status ?? null];
-    const where = `WHERE ($1::uuid IS NULL OR c.shop_uuid=$1)
-      AND ($2::uuid IS NULL OR c.owner_uuid=$2)
-      AND ($3::text IS NULL OR (c.closed_at IS NULL AND $3='active') OR (c.closed_at IS NOT NULL AND $3='closed'))`;
-    const [count] = await manager.query(`SELECT count(*)::int AS total FROM carts c ${where}`, parameters);
-    const records: (CartRow & { shop_name: string | null; items_count: number })[] = await manager.query(
-      `SELECT c.*, sh.name AS shop_name,
+    const builder = manager.createQueryBuilder(CartModel, 'cart');
+    if (query.shopUuid) builder.andWhere('cart.shopUuid = :shopUuid', { shopUuid: query.shopUuid });
+    if (query.ownerUuid) builder.andWhere('cart.ownerUuid = :ownerUuid', { ownerUuid: query.ownerUuid });
+    if (query.status)
+      builder.andWhere(query.status === 'active' ? 'cart.closedAt IS NULL' : 'cart.closedAt IS NOT NULL');
+    const page = await this.pagination.read(builder, query, {
+      scope: 'cart.cart.list',
+      filters: { shopUuid: query.shopUuid, ownerUuid: query.ownerUuid, status: query.status },
+      order: [
+        { expression: 'cart.createdAt', direction: 'DESC', type: 'timestamptz' },
+        { expression: 'cart.uuid', direction: 'ASC', type: 'uuid' },
+      ],
+    });
+    const summaries: { uuid: string; shop_name: string | null; items_count: number }[] =
+      page.items.length === 0
+        ? []
+        : await manager.query(
+            `SELECT c.uuid, sh.name AS shop_name,
       (SELECT count(*)::int FROM cart_items ci WHERE ci.cart_uuid=c.uuid) AS items_count
-      FROM carts c LEFT JOIN shop_snapshot sh ON sh.uuid=c.shop_uuid ${where}
-      ORDER BY c.updated_at DESC,c.uuid LIMIT $4 OFFSET $5`,
-      [...parameters, query.limit, query.offset],
-    );
+      FROM carts c LEFT JOIN shop_snapshot sh ON sh.uuid=c.shop_uuid WHERE c.uuid = ANY($1::uuid[])`,
+            [page.items.map((cart) => cart.uuid)],
+          );
+    const byUuid = new Map(summaries.map((row) => [row.uuid, row]));
     return {
-      data: records.map((row) => ({
-        uuid: row.uuid,
-        ownerUuid: row.owner_uuid,
-        version: row.version,
-        shop: { uuid: row.shop_uuid, name: row.shop_name },
-        itemsCount: row.items_count,
-        ...this.metadata(row),
+      items: page.items.map((cart) => ({
+        uuid: cart.uuid,
+        ownerUuid: cart.ownerUuid,
+        version: cart.version,
+        shop: { uuid: cart.shopUuid, name: byUuid.get(cart.uuid)?.shop_name ?? null },
+        itemsCount: byUuid.get(cart.uuid)?.items_count ?? 0,
+        createdAt: cart.createdAt.toISOString(),
+        updatedAt: cart.updatedAt.toISOString(),
+        closedAt: cart.closedAt?.toISOString() ?? null,
       })),
-      meta: { totalRows: count.total, limit: query.limit, offset: query.offset },
+      meta: page.meta,
     };
   }
 

@@ -22,14 +22,14 @@ export class SourceGateway {
   storeProductByRecord(recordUuid: string): Promise<any> {
     return this.request(this.store, 'store.product.getByRecordUuid', { recordUuid });
   }
-  allStoreProducts(): Promise<any> {
-    return this.request(this.store, 'store.product.getAll', { query: {} });
+  allStoreProducts(nextToken?: string): Promise<any> {
+    return this.request(this.store, 'store.product.getAll', { query: { limit: 100, nextToken } });
   }
   catalogProduct(uuid: string): Promise<any> {
     return this.request(this.product, 'catalog.v2.product.getByUuid', { uuid });
   }
-  allShops(offset: number): Promise<any> {
-    return this.request(this.shop, 'shop.getAll', { limit: 100, offset });
+  allShops(nextToken?: string): Promise<any> {
+    return this.request(this.shop, 'shop.getAll', { limit: 100, nextToken });
   }
   shopByUuid(uuid: string): Promise<any> {
     return this.request(this.shop, 'shop.getByUuid', { uuid });

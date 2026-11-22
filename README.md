@@ -97,15 +97,15 @@ gateway/Order/session flow, а не публично выбираемое пол
 
 | Команда | Payload |
 |---|---|
-| cart.admin.getAll | shopUuid?, ownerUuid?, status? (active/closed), limit=50, offset=0 |
+| cart.admin.getAll | shopUuid?, ownerUuid?, status? (active/closed), limit=50, nextToken? |
 | cart.admin.getByUuid | uuid |
 | cart.admin.item.add | cartUuid, idempotencyKey, recordUuid, quantity |
 | cart.admin.item.setQuantity | cartUuid, idempotencyKey, recordUuid, quantity, expectedItemVersion |
 | cart.admin.item.remove | cartUuid, idempotencyKey, recordUuid, expectedItemVersion |
 
-Список возвращает `{ data, meta: { totalRows, limit, offset } }` с UUID, владельцем,
+Список возвращает `{ items, meta: { limit, nextToken } }` с UUID, владельцем,
 магазином/названием, версией, числом позиций и createdAt/updatedAt/closedAt.
-Фильтры пересекаются; без status возвращаются обе группы. limit 1–100, offset >= 0;
+Фильтры пересекаются; без status возвращаются обе группы. limit 1–100, nextToken — непрозрачная строка;
 порядок updated_at DESC, uuid ASC. Карточка — обычное представление плюс timestamps.
 Чтение использует локальные проекции в REPEATABLE READ и ничего не создает.
 Закрытые корзины видны администратору; их разрешения изменения выключены.
@@ -281,3 +281,21 @@ price_value numeric(12,2) и currency_code; Store offer цену не задаё
 не переоценивает соседние учётки. Вход Store Product принимает v3 и старые сообщения v2
 через адаптер; Inventory v2 не меняется. Миграция копирует прежнюю offer-цену к записям,
 а авторитетный bootstrap согласует новые price UUID без сброса версий, корзин и количества.
+
+## Курсорные списки
+
+Самостоятельные списки принимают `{ limit?: number, nextToken?: string, ...filters }`
+и возвращают `{ items, meta: { limit, nextToken: string | null } }`.
+Размер пачки по умолчанию 50, максимум 100. OFFSET и общее количество удалены;
+при продолжении нужно передавать прежние фильтры. Новый фильтр/сортировка — новый
+список без токена. Корни выбираются до relations; коллекции карточек и снимков
+остаются полными. Последний ключ сортировки — уникальный PK.
+
+Пакет `@sellgar/pagination` подключён через nested submodule; build и unit image
+сначала собирают его. `PaginationModule` требует `PAGINATION_TOKEN_SECRET` минимум
+32 байта, одинаковый у реплик сервиса. Helm читает его из Secret `cart-pagination`,
+ключ `token-secret`. Ansible infrastructure создаёт отсутствующие ключи командой
+`.venv/bin/ansible-playbook -i inventory/dev.yml secrets.yml --tags pagination` из ansible/
+без замены существующих значений. Локально ключ задаётся окружением; в Git его нет.
+Отсутствие/слабый ключ блокирует настройку пагинации. HMAC не предоставляет доступ:
+ограничения магазина/владельца применяются заново к каждому запросу.

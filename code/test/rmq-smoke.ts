@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -56,6 +57,7 @@ async function smoke(): Promise<void> {
       AMQP_CART_SRV_EVENT_QUEUE: eventQueue,
       AMQP_EVENTS_EXCHANGE: exchange,
       CART_BOOTSTRAP_ON_START: 'false',
+      PAGINATION_TOKEN_SECRET: 'test-pagination-key-at-least-32-bytes',
       OUTBOX_PUBLISH_INTERVAL_MS: '50',
     });
     const migration = await new DataSource(CartDatabaseOptions.create(process.env)).initialize();
@@ -128,11 +130,11 @@ async function smoke(): Promise<void> {
       ownerUuid: scope.ownerUuid,
       shopUuid: scope.shopUuid,
       limit: 1,
-      offset: 0,
     });
-    assert.equal(adminPage.meta.totalRows, 1);
-    assert.equal(adminPage.data[0].uuid, cart.uuid);
-    assert.equal(adminPage.data[0].itemsCount, 1);
+    assert.equal(adminPage.meta.limit, 1);
+    assert.equal(adminPage.meta.nextToken, null);
+    assert.equal(adminPage.items[0].uuid, cart.uuid);
+    assert.equal(adminPage.items[0].itemsCount, 1);
     let adminView = await call('cart.admin.getByUuid', { uuid: cart.uuid });
     assert.equal(adminView.ownerUuid, scope.ownerUuid);
     assert.equal(adminView.items[0].productName, result.items[0].productName);
