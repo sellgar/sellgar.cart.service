@@ -46,7 +46,7 @@ describe('Authoritative Store quantity checks', () => {
     );
   });
 
-  it('uses separate full-snapshot commands for recovery without changing the ordinary stock read', async () => {
+  it('uses full snapshots to distinguish an archived sale from a missing ordinary card', async () => {
     client.send.mockClear();
     client.send.mockReturnValue(of(product));
     await gateway.storeProductSnapshot('product');
@@ -57,7 +57,7 @@ describe('Authoritative Store quantity checks', () => {
       [{ cmd: 'store.product.getSnapshot' }, { uuid: 'product' }],
       [{ cmd: 'store.product.getSnapshots' }, { query: { limit: 100, nextToken: 'next' } }],
       [{ cmd: 'catalog.v2.product.getSnapshot' }, { uuid: 'catalog' }],
-      [{ cmd: 'store.product.getByUuid' }, { uuid: 'product', query: {} }],
+      [{ cmd: 'store.product.getSnapshot' }, { uuid: 'product' }],
     ]);
   });
 });

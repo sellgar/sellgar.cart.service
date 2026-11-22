@@ -5,7 +5,8 @@ Cart owns carts, quantities and its participation in Order checkout. Source: wor
 - Store owns prices and inventory; Product owns catalog names/status/images; Shop owns shop names.
 - Keep exactly the required projection fields. No catalog history or inventory movements.
 - ownerUuid comes from verified internal session context; no owner discriminator or public user/session lookup.
-- Reads use local projections. Quantity-increasing commands verify authoritative Store stock; checkout reserves belong to Order/Store.
+- Reads use local projections. Add/setQuantity and checkout preparation refresh the record's Store/Shop/Product projections from owners before checking availability. Recovery commits independently of a rejected command so an observed archive remains visible. Quantity commands additionally verify authoritative Store stock using the full snapshot; a sale conflict refreshes the projection before rejection. Checkout reserves belong to Order/Store.
+- Архивные/отключённые и скрытые строки сохраняются с причиной и возможностью удаления, но исключаются из itemsTotal и оформления. Не создавать отдельную систему сообщений вместо существующих причин недоступности.
 - Explicit migrations; synchronize is disabled.
 - Atomic commands/outbox, inbox source version checks, recover gaps from owners.
 - Use @sellgar/outbox from library/sellgar.outbox.library for writer, repository, relay, retries, timeouts and metrics. AppModule registers it once with CART_OUTBOX_OPTIONS; CartEventsRepository only builds domain events and passes the current EntityManager to OutboxWriter. Do not recreate local relay/repository implementations. yarn build builds the workspace library first.

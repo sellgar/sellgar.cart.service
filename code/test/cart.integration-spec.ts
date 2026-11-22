@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync, readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { Logger } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import { RmqContext } from '@nestjs/microservices';
 import { DataSource } from 'typeorm';
 import { OutboxRepository } from '@sellgar/outbox';
@@ -42,6 +42,7 @@ describe('Cart PostgreSQL invariants', () => {
   let projections: ProjectionService;
   let events: CartEventsRepository;
   let config: ConfigService;
+  let recovery: ProjectionRecoveryService;
   let fixture: ReturnType<typeof data>;
   const stock = { assertStock: jest.fn(async () => {}) };
   const scope = () => ({ ownerUuid: fixture.ownerUuid, shopUuid: fixture.shopUuid });
@@ -153,6 +154,17 @@ describe('Cart PostgreSQL invariants', () => {
     const commands = new CartCommandRepository(db),
       repository = new CartRepository(events),
       query = new CartQueryRepository(config);
+    projections = new ProjectionService(db, events);
+    recovery = new ProjectionRecoveryService(
+      db,
+      {
+        storeProductByRecord: async () => fixture.store,
+        shopByUuid: async () => fixture.shop,
+        catalogProduct: async () => fixture.product,
+      } as unknown as SourceGateway,
+      projections,
+      config,
+    );
     carts = new CartService(
       db,
       commands,
@@ -161,14 +173,14 @@ describe('Cart PostgreSQL invariants', () => {
       events,
       stock as unknown as SourceGateway,
       config,
+      recovery,
     );
-    checkouts = new CartCheckoutService(commands, repository, query, events, config);
+    checkouts = new CartCheckoutService(commands, repository, query, events, config, recovery);
     admin = new CartAdminService(
       db,
       new CartAdminQueryRepository(query, new CursorPagination('test-pagination-key-at-least-32-bytes')),
       carts,
     );
-    projections = new ProjectionService(db, events);
   });
 
   beforeEach(async () => {
@@ -313,6 +325,77 @@ describe('Cart PostgreSQL invariants', () => {
       idempotencyKey: randomUUID(),
     });
     expect((await view()).items).toEqual([]);
+  });
+
+  it('rejects a stale-page add and retains an unavailable row before the catalog event arrives', async () => {
+    await add(2);
+    const before = await view();
+    fixture.product.version = 2;
+    fixture.product.status = 'archived';
+    // The owner changed, but its event has deliberately not been applied to Cart.
+    expect((await view()).items[0].canCheckout).toBe(true);
+    await expect(add()).rejects.toThrow('Товар больше не продается');
+    const after = await view();
+    expect(after.version).toBe(before.version);
+    expect(after.items[0]).toMatchObject({
+      quantity: 2,
+      message: 'Товар больше не продается',
+      canCheckout: false,
+      canRemove: true,
+    });
+    expect(after.itemsTotal).toBe('0.00');
+    const [projection] = await db.query('SELECT status,source_version FROM product_snapshot WHERE uuid=$1', [
+      fixture.productUuid,
+    ]);
+    expect(projection).toEqual({ status: 'archived', source_version: 2 });
+    await projections.apply(event('product', { ...fixture.product, version: 1, status: 'active' }));
+    expect((await view()).items[0].canCheckout).toBe(false);
+  });
+
+  it('rejects a new archived variant without inserting a cart item', async () => {
+    fixture.product.version = 2;
+    fixture.product.variants[0].status = 'archived';
+    await expect(add()).rejects.toThrow('Товар больше не продается');
+    expect((await view()).items).toEqual([]);
+  });
+
+  it('refreshes a sale archived between recovery and the final Store check', async () => {
+    await add(2);
+    stock.assertStock.mockImplementationOnce(async () => {
+      fixture.store.version = 2;
+      fixture.store.status = 'archived';
+      throw new ConflictException('Store no longer confirms this sellable record');
+    });
+    await expect(add()).rejects.toThrow('sellable record');
+    const result = await view();
+    expect(result.items[0]).toMatchObject({
+      quantity: 2,
+      message: 'Товар больше не продается',
+      canCheckout: false,
+    });
+    expect(result.itemsTotal).toBe('0.00');
+  });
+
+  it('checks authoritative archive before checkout and keeps rows unlocked on rejection', async () => {
+    await add(2);
+    const item = (await view()).items[0];
+    fixture.product.version = 2;
+    fixture.product.variants[0].status = 'archived';
+    await expect(
+      checkouts.prepare({
+        ...scope(),
+        cartUuid: (await view()).uuid,
+        checkoutUuid: randomUUID(),
+        idempotencyKey: randomUUID(),
+        items: [{ recordUuid: item.recordUuid, quantity: 2, expectedItemVersion: item.version }],
+      }),
+    ).rejects.toThrow('Товар больше не продается');
+    expect((await view()).items[0]).toMatchObject({
+      message: 'Товар больше не продается',
+      checkoutUuid: null,
+      canRemove: true,
+    });
+    expect((await view()).itemsTotal).toBe('0.00');
   });
 
   it('updates catalog names/status/images without a Store event or cart version change', async () => {

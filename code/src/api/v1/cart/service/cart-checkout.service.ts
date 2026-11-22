@@ -5,6 +5,7 @@ import { EntityManager } from 'typeorm';
 import { lockOwner } from '../../../../common/database';
 import { requestHash } from '../../../../common/request-hash';
 import { CartEventsRepository } from '../../../../integration/outbox/cart-events.repository';
+import { ProjectionRecoveryService } from '../../../../integration/recovery/projection-recovery.service';
 import { CartCheckoutDto, PrepareCartDto } from '../controller/dto/cart.dto';
 import { CartCommandRepository } from '../repository/cart-command.repository';
 import { CartQueryRepository } from '../repository/cart-query.repository';
@@ -26,6 +27,7 @@ export class CartCheckoutService {
     private readonly queries: CartQueryRepository,
     private readonly events: CartEventsRepository,
     private readonly config: ConfigService,
+    private readonly recovery: ProjectionRecoveryService,
   ) {}
 
   prepare(input: PrepareCartDto) {
@@ -55,6 +57,7 @@ export class CartCheckoutService {
           this.carts.assertItemVersion(row, item.expectedItemVersion);
           if (row.quantity !== item.quantity)
             throw new ConflictException('Checkout quantity differs from cart');
+          await this.recovery.synchronize('record_inventory', item.recordUuid);
           const view = cartItemView(
             await this.queries.line(manager, cart, item.recordUuid),
             cart.shop_uuid,

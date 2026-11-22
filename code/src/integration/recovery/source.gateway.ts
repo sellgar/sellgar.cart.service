@@ -16,9 +16,6 @@ export class SourceGateway {
     private readonly config: ConfigService,
   ) {}
 
-  storeProduct(uuid: string): Promise<any> {
-    return this.request(this.store, 'store.product.getByUuid', { uuid, query: {} });
-  }
   storeProductSnapshot(uuid: string): Promise<any> {
     return this.request(this.store, 'store.product.getSnapshot', { uuid });
   }
@@ -45,7 +42,7 @@ export class SourceGateway {
     shopUuid: string,
     quantity: number,
   ): Promise<void> {
-    const product = await this.storeProduct(storeProductUuid);
+    const product = await this.storeProductSnapshot(storeProductUuid);
     const offer = product.offers?.find((item: any) => item.uuid === offerUuid);
     const record = offer?.records?.find((item: any) => item.uuid === recordUuid);
     if (

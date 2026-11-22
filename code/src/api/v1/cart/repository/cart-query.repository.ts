@@ -30,6 +30,9 @@ export class CartQueryRepository {
         )
       : [];
     const items = raw.map((row) => cartItemView(row, cart.shop_uuid, currencyCode));
+    const included = items.filter(
+      (item) => !item.reasons.includes('not_sold') && !item.reasons.includes('hidden'),
+    );
     const [shop] = await manager.query('SELECT name,source_version FROM shop_snapshot WHERE uuid=$1', [
       cart.shop_uuid,
     ]);
@@ -41,8 +44,8 @@ export class CartQueryRepository {
       shop: { uuid: cart.shop_uuid, name: shop?.name ?? null, sourceVersion: shop?.source_version ?? null },
       items,
       currencyCode,
-      itemsTotal: items.every((i) => i.price !== null && i.price.currencyCode === currencyCode)
-        ? sumPrices(items.map((i) => i.subtotal!))
+      itemsTotal: included.every((i) => i.price !== null && i.price.currencyCode === currencyCode)
+        ? sumPrices(included.map((i) => i.subtotal!))
         : null,
     };
   }

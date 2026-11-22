@@ -6,6 +6,7 @@ import { DataSource, EntityManager } from 'typeorm';
 import { lockOwner, rows } from '../../../../common/database';
 import { CartEventsRepository } from '../../../../integration/outbox/cart-events.repository';
 import { SourceGateway } from '../../../../integration/recovery/source.gateway';
+import { ProjectionRecoveryService } from '../../../../integration/recovery/projection-recovery.service';
 import {
   AddCartItemDto,
   CartScopeDto,
@@ -29,6 +30,7 @@ export class CartService {
     private readonly events: CartEventsRepository,
     private readonly store: SourceGateway,
     private readonly config: ConfigService,
+    private readonly recovery: ProjectionRecoveryService,
   ) {}
 
   get(scope: CartScopeDto) {
@@ -164,6 +166,8 @@ export class CartService {
     recordUuid: string,
     quantity: number,
   ): Promise<void> {
+    // Recovery commits independently: a rejected command must not roll back an observed archive.
+    await this.recovery.synchronize('record_inventory', recordUuid);
     const line = await this.queries.line(manager, cart, recordUuid);
     const view = cartItemView(
       { ...line, quantity },
@@ -171,12 +175,17 @@ export class CartService {
       this.config.getOrThrow('CART_CURRENCY_CODE'),
     );
     if (!view.canCheckout) throw new ConflictException({ message: view.message, reasons: view.reasons });
-    await this.store.assertStock(
-      line.store_product_uuid!,
-      line.offer_uuid!,
-      recordUuid,
-      cart.shop_uuid,
-      quantity,
-    );
+    try {
+      await this.store.assertStock(
+        line.store_product_uuid!,
+        line.offer_uuid!,
+        recordUuid,
+        cart.shop_uuid,
+        quantity,
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) await this.recovery.synchronize('record_inventory', recordUuid);
+      throw error;
+    }
   }
 }
