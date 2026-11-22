@@ -191,7 +191,10 @@ schemaVersion=3); Shop `shop.created/updated` (schemaVersion=3).
   после commit. Worker восстанавливает authoritative snapshot, разрешает покрытые
   проблемы и не откатывает более новые данные. Постоянного опроса здоровых источников нет.
 - Bootstrap загружает магазины постранично и Store Products, включая скрытые/архивные,
-  с каталоговыми зависимостями. Recovery inventory использует новый Store read pattern
+  с каталоговыми зависимостями. Для этого используются отдельные внутренние команды
+  `store.product.getSnapshots`, `store.product.getSnapshot` и `catalog.v2.product.getSnapshot`.
+  Обычное чтение Store для проверки остатков остаётся `store.product.getByUuid`.
+  Recovery inventory использует Store read pattern
   `store.product.getByRecordUuid`. Bootstrap и synchronize доступны только внутри сервиса;
   внешних RMQ-команд для управления проекциями нет.
 - Неподдерживаемый/поврежденный контракт отправляется в durable dead-letter queue:

@@ -45,7 +45,7 @@ export class ProjectionRecoveryService implements OnModuleInit, OnModuleDestroy 
         await this.projections.synchronize('product', await this.gateway.catalogProduct(uuid));
         return;
       case 'store_product':
-        await this.storeProduct(await this.gateway.storeProduct(uuid));
+        await this.storeProduct(await this.gateway.storeProductSnapshot(uuid));
         return;
       case 'record_inventory':
         await this.storeProduct(await this.gateway.storeProductByRecord(uuid));

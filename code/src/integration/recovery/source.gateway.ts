@@ -19,14 +19,17 @@ export class SourceGateway {
   storeProduct(uuid: string): Promise<any> {
     return this.request(this.store, 'store.product.getByUuid', { uuid, query: {} });
   }
+  storeProductSnapshot(uuid: string): Promise<any> {
+    return this.request(this.store, 'store.product.getSnapshot', { uuid });
+  }
   storeProductByRecord(recordUuid: string): Promise<any> {
     return this.request(this.store, 'store.product.getByRecordUuid', { recordUuid });
   }
   allStoreProducts(nextToken?: string): Promise<any> {
-    return this.request(this.store, 'store.product.getAll', { query: { limit: 100, nextToken } });
+    return this.request(this.store, 'store.product.getSnapshots', { query: { limit: 100, nextToken } });
   }
   catalogProduct(uuid: string): Promise<any> {
-    return this.request(this.product, 'catalog.v2.product.getByUuid', { uuid });
+    return this.request(this.product, 'catalog.v2.product.getSnapshot', { uuid });
   }
   allShops(nextToken?: string): Promise<any> {
     return this.request(this.shop, 'shop.getAll', { limit: 100, nextToken });

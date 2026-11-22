@@ -45,4 +45,19 @@ describe('Authoritative Store quantity checks', () => {
       'sellable record',
     );
   });
+
+  it('uses separate full-snapshot commands for recovery without changing the ordinary stock read', async () => {
+    client.send.mockClear();
+    client.send.mockReturnValue(of(product));
+    await gateway.storeProductSnapshot('product');
+    await gateway.allStoreProducts('next');
+    await gateway.catalogProduct('catalog');
+    await gateway.assertStock('product', 'offer', 'record', 'shop', 1);
+    expect(client.send.mock.calls).toEqual([
+      [{ cmd: 'store.product.getSnapshot' }, { uuid: 'product' }],
+      [{ cmd: 'store.product.getSnapshots' }, { query: { limit: 100, nextToken: 'next' } }],
+      [{ cmd: 'catalog.v2.product.getSnapshot' }, { uuid: 'catalog' }],
+      [{ cmd: 'store.product.getByUuid' }, { uuid: 'product', query: {} }],
+    ]);
+  });
 });
