@@ -15,6 +15,9 @@ import { CartCommandRepository } from './api/v1/cart/repository/cart-command.rep
 import { CartQueryRepository } from './api/v1/cart/repository/cart-query.repository';
 import { CartRepository } from './api/v1/cart/repository/cart.repository';
 import { CartCheckoutService } from './api/v1/cart/service/cart-checkout.service';
+import { CartCheckoutQueryService } from './api/v1/cart/service/cart-checkout-query.service';
+import { CartSelectionFactory } from './api/v1/cart/service/cart-selection.factory';
+import { CheckoutStateMachine } from './api/v1/cart/service/checkout-state-machine';
 import { CartService } from './api/v1/cart/service/cart.service';
 import { CartDatabaseOptions } from './database/cart-database.options';
 import { OrderEventsController } from './integration/order/order-events.controller';
@@ -98,6 +101,9 @@ const clients = [
     CartRepository,
     CartService,
     CartCheckoutService,
+    CartCheckoutQueryService,
+    CartSelectionFactory,
+    CheckoutStateMachine,
     CartEventsRepository,
     ProjectionService,
     ProjectionRecoveryService,

@@ -57,6 +57,8 @@ gateway/Order/session flow, а не публично выбираемое пол
 | cart.item.add | idempotencyKey, ownerUuid, shopUuid, recordUuid, quantity |
 | cart.item.setQuantity | idempotencyKey, ownerUuid, shopUuid, recordUuid, quantity, expectedItemVersion |
 | cart.item.remove | idempotencyKey, ownerUuid, shopUuid, recordUuid, expectedItemVersion |
+| cart.checkout.preview | ownerUuid, shopUuid, cartUuid, items[] |
+| cart.checkout.get | ownerUuid, shopUuid, cartUuid, checkoutUuid |
 | cart.checkout.prepare | idempotencyKey, ownerUuid, shopUuid, cartUuid, checkoutUuid, items[] |
 | cart.checkout.cancel | idempotencyKey, ownerUuid, shopUuid, cartUuid, checkoutUuid |
 | cart.owner.close | idempotencyKey, ownerUuid |
@@ -69,6 +71,12 @@ gateway/Order/session flow, а не публично выбираемое пол
 `{ recordUuid, quantity, expectedItemVersion }`; массив непустой, UUID не повторяются.
 Подготавливаются выбранные целые позиции, их количество должно совпасть с корзиной.
 Результат изменяющей команды минимален; актуальное представление читается отдельно.
+
+`checkout.preview` возвращает расчёт выбранных строк без резервирования и изменения
+Cart. Order должен сохранить его в draft до показа покупателю и использовать
+сохранённую цену при подтверждении. `checkout.get` восстанавливает текущее состояние
+после потери ответа; старый идемпотентный receipt не является актуальным состоянием.
+Подробный контракт и границы этапа: [docs/checkout.md](docs/checkout.md).
 
 - `get` создает пустую корзину при первом обращении, сохраняя ее UUID после очистки.
 - Повторное добавление увеличивает существующее количество. Add/set проверяют текущий

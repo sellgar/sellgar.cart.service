@@ -9,7 +9,7 @@ import { CartAdminPage } from '../entity/cart-admin-page.entity';
 import { CartAdminView } from '../entity/cart-admin-view.entity';
 import { CartRow } from '../entity/cart-row.entity';
 import { CartQueryRepository } from './cart-query.repository';
-import { CartScopeDto } from '../controller/dto/cart.dto';
+import { CartScopeDto } from '../controller/dto/cart-scope.dto';
 
 @Injectable()
 export class CartAdminQueryRepository {

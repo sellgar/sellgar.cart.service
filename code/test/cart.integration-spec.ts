@@ -18,6 +18,9 @@ import { CartRepository } from '../src/api/v1/cart/repository/cart.repository';
 import { CartQueryRepository } from '../src/api/v1/cart/repository/cart-query.repository';
 import { CartService } from '../src/api/v1/cart/service/cart.service';
 import { CartCheckoutService } from '../src/api/v1/cart/service/cart-checkout.service';
+import { CartCheckoutQueryService } from '../src/api/v1/cart/service/cart-checkout-query.service';
+import { CartSelectionFactory } from '../src/api/v1/cart/service/cart-selection.factory';
+import { CheckoutStateMachine } from '../src/api/v1/cart/service/checkout-state-machine';
 import { CartAdminService } from '../src/api/v1/cart/service/cart-admin.service';
 import { CartAdminQueryRepository } from '../src/api/v1/cart/repository/cart-admin-query.repository';
 import { GetAllCartsDto } from '../src/api/v1/cart/controller/dto/get-all-carts.dto';
@@ -38,6 +41,7 @@ describe('Cart PostgreSQL invariants', () => {
   let db: DataSource;
   let carts: CartService;
   let checkouts: CartCheckoutService;
+  let checkoutQueries: CartCheckoutQueryService;
   let admin: CartAdminService;
   let projections: ProjectionService;
   let events: CartEventsRepository;
@@ -175,7 +179,16 @@ describe('Cart PostgreSQL invariants', () => {
       config,
       recovery,
     );
-    checkouts = new CartCheckoutService(commands, repository, query, events, config, recovery);
+    checkouts = new CartCheckoutService(
+      commands,
+      repository,
+      query,
+      events,
+      config,
+      recovery,
+      new CheckoutStateMachine(),
+    );
+    checkoutQueries = new CartCheckoutQueryService(db, repository, query, new CartSelectionFactory());
     admin = new CartAdminService(
       db,
       new CartAdminQueryRepository(query, new CursorPagination('test-pagination-key-at-least-32-bytes')),
@@ -575,6 +588,195 @@ describe('Cart PostgreSQL invariants', () => {
     expect((await db.query('SELECT count(*)::int n FROM inbox_event'))[0].n).toBe(before);
   });
 
+  it('calculates only selected lines without locking or changing the cart', async () => {
+    await add(2);
+    await add(3, fixture.secondRecordUuid);
+    const cart = await view();
+    const item = cart.items.find((line) => line.recordUuid === fixture.recordUuid)!;
+    const before = await db.query('SELECT count(*)::int n FROM outbox_event');
+    const result = await checkoutQueries.preview({
+      ...scope(),
+      cartUuid: cart.uuid,
+      items: [{ recordUuid: item.recordUuid, quantity: 2, expectedItemVersion: item.version }],
+    });
+    expect(result).toMatchObject({
+      cartUuid: cart.uuid,
+      ownerUuid: fixture.ownerUuid,
+      shop: { uuid: fixture.shopUuid, name: 'Центр' },
+      currencyCode: 'RUB',
+      itemsTotal: '251.00',
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      recordUuid: item.recordUuid,
+      productName: 'Кофе',
+      variantName: 'Арабика',
+      article: item.article,
+      clarifications: ['250 г'],
+      imageUuid: fixture.imageUuid,
+      quantity: 2,
+      expectedItemVersion: item.version,
+      unitPrice: { uuid: fixture.priceUuid, value: '125.50', currencyCode: 'RUB' },
+      subtotal: '251.00',
+    });
+    expect(await view()).toEqual(cart);
+    expect(await db.query('SELECT count(*)::int n FROM outbox_event')).toEqual(before);
+    expect(
+      (await db.query('SELECT count(*)::int n FROM cart_checkouts WHERE cart_uuid=$1', [cart.uuid]))[0].n,
+    ).toBe(0);
+    await add();
+    expect((await view()).items.find((line) => line.recordUuid === item.recordUuid)?.quantity).toBe(3);
+  });
+
+  it('reads cart lines and prices from a single database snapshot', async () => {
+    await add();
+    const cart = await view();
+    const item = cart.items[0];
+    const queries = new CartQueryRepository(config);
+    const read = queries.view.bind(queries);
+    jest.spyOn(queries, 'view').mockImplementation(async (manager, row) => {
+      await db.query('UPDATE accounting_record_snapshot SET price_value=200 WHERE uuid=$1', [
+        item.recordUuid,
+      ]);
+      return read(manager, row);
+    });
+    const reader = new CartCheckoutQueryService(
+      db,
+      new CartRepository(events),
+      queries,
+      new CartSelectionFactory(),
+    );
+    const result = await reader.preview({
+      ...scope(),
+      cartUuid: cart.uuid,
+      items: [{ recordUuid: item.recordUuid, quantity: 1, expectedItemVersion: item.version }],
+    });
+    expect(result.itemsTotal).toBe('125.50');
+    expect((await view()).items[0].price?.value).toBe('200.00');
+  });
+
+  it('does not substitute a later price into the result already returned to Order', async () => {
+    await add(2);
+    const cart = await view(),
+      item = cart.items[0];
+    const selection = {
+      ...scope(),
+      cartUuid: cart.uuid,
+      items: [{ recordUuid: item.recordUuid, quantity: 2, expectedItemVersion: item.version }],
+    };
+    const calculation = await checkoutQueries.preview(selection);
+    fixture.store.version++;
+    fixture.store.offers[0].records[0].currentPrice.value = '300.00';
+    await projections.synchronize('store_product', fixture.store);
+    expect((await view()).items[0].version).toBe(item.version);
+    expect((await checkoutQueries.preview(selection)).itemsTotal).toBe('600.00');
+    const prepared = await checkouts.prepare({
+      ...selection,
+      checkoutUuid: randomUUID(),
+      idempotencyKey: randomUUID(),
+    });
+    expect(prepared.status).toBe('prepared');
+    expect(prepared).not.toHaveProperty('itemsTotal');
+    expect(calculation.items[0].unitPrice.value).toBe('125.50');
+    expect(calculation.itemsTotal).toBe('251.00');
+  });
+
+  it('rejects stale, absent and incomplete selections without preparing any line', async () => {
+    await add(2);
+    const cart = await view(),
+      item = cart.items[0];
+    const base = { ...scope(), cartUuid: cart.uuid };
+    const selected = { recordUuid: item.recordUuid, quantity: 2, expectedItemVersion: item.version };
+    for (const change of [{ quantity: 1 }, { expectedItemVersion: '999' }, { recordUuid: randomUUID() }]) {
+      await expect(checkoutQueries.preview({ ...base, items: [{ ...selected, ...change }] })).rejects.toThrow(
+        'differs',
+      );
+    }
+    await expect(checkoutQueries.preview({ ...base, items: [] })).rejects.toThrow('nonempty');
+    await expect(checkoutQueries.preview({ ...base, items: [selected, selected] })).rejects.toThrow('unique');
+    expect(await view()).toEqual(cart);
+  });
+
+  it('keeps preview scoped to the owner, shop and active cart', async () => {
+    await add();
+    const cart = await view(),
+      item = cart.items[0];
+    const input = {
+      ...scope(),
+      cartUuid: cart.uuid,
+      items: [{ recordUuid: item.recordUuid, quantity: 1, expectedItemVersion: item.version }],
+    };
+    await expect(checkoutQueries.preview({ ...input, ownerUuid: randomUUID() })).rejects.toThrow('not found');
+    await expect(checkoutQueries.preview({ ...input, shopUuid: randomUUID() })).rejects.toThrow('not found');
+    await carts.closeOwner({ ownerUuid: fixture.ownerUuid, idempotencyKey: randomUUID() });
+    await expect(checkoutQueries.preview(input)).rejects.toThrow('closed');
+  });
+
+  it('rejects archived or already prepared lines in preview', async () => {
+    await add();
+    const cart = await view(),
+      item = cart.items[0];
+    const input = {
+      ...scope(),
+      cartUuid: cart.uuid,
+      items: [{ recordUuid: item.recordUuid, quantity: 1, expectedItemVersion: item.version }],
+    };
+    fixture.product.version++;
+    fixture.product.status = 'archived';
+    await projections.synchronize('product', fixture.product);
+    await expect(checkoutQueries.preview(input)).rejects.toThrow('больше не продается');
+    fixture.product.version++;
+    fixture.product.status = 'active';
+    await projections.synchronize('product', fixture.product);
+    await checkouts.prepare({ ...input, checkoutUuid: randomUUID(), idempotencyKey: randomUUID() });
+    const updated = (await view()).items[0];
+    await expect(
+      checkoutQueries.preview({
+        ...input,
+        items: [{ ...input.items[0], expectedItemVersion: updated.version }],
+      }),
+    ).rejects.toThrow('Оформляется');
+  });
+
+  it('recovers current checkout state after completion and owner closure', async () => {
+    await add();
+    const cart = await view(),
+      item = cart.items[0];
+    const base = { ...scope(), cartUuid: cart.uuid, checkoutUuid: randomUUID() };
+    await expect(checkoutQueries.get(base)).rejects.toThrow('not found');
+    const command = {
+      ...base,
+      idempotencyKey: randomUUID(),
+      items: [{ recordUuid: item.recordUuid, quantity: 1, expectedItemVersion: item.version }],
+    };
+    const receipt = await checkouts.prepare(command);
+    expect(await checkoutQueries.get(base)).toEqual(receipt);
+    await checkouts.complete({ ...base, idempotencyKey: randomUUID() });
+    expect(await checkouts.prepare(command)).toEqual(receipt);
+    expect((await checkouts.prepare({ ...command, idempotencyKey: randomUUID() })).status).toBe('completed');
+    await carts.closeOwner({ ownerUuid: fixture.ownerUuid, idempotencyKey: randomUUID() });
+    expect(await checkoutQueries.get(base)).toEqual({
+      checkoutUuid: base.checkoutUuid,
+      cartUuid: cart.uuid,
+      status: 'completed',
+    });
+    await expect(checkoutQueries.get({ ...base, ownerUuid: randomUUID() })).rejects.toThrow('not found');
+    await expect(checkoutQueries.get({ ...base, shopUuid: randomUUID() })).rejects.toThrow('not found');
+  });
+
+  it('exposes cancellation tombstones and leaves the selection available', async () => {
+    await add();
+    const cart = await view();
+    const base = { ...scope(), cartUuid: cart.uuid, checkoutUuid: randomUUID() };
+    await checkouts.cancel({ ...base, idempotencyKey: randomUUID() });
+    expect(await checkoutQueries.get(base)).toEqual({
+      checkoutUuid: base.checkoutUuid,
+      cartUuid: cart.uuid,
+      status: 'cancelled',
+    });
+    expect((await view()).items[0].canCheckout).toBe(true);
+  });
+
   it('locks only selected rows, cancels safely and completes once', async () => {
     await add(2);
     await add(1, fixture.secondRecordUuid);
@@ -652,7 +854,7 @@ describe('Cart PostgreSQL invariants', () => {
       schemaVersion: 1,
       aggregateType: 'checkout',
       aggregateUuid: checkoutUuid,
-      aggregateVersion: 3,
+      aggregateVersion: '3',
       occurredAt: new Date().toISOString(),
       payload: { ...scope(), cartUuid: cart.uuid },
     };

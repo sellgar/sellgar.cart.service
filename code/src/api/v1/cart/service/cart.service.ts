@@ -7,13 +7,11 @@ import { lockOwner, rows } from '../../../../common/database';
 import { CartEventsRepository } from '../../../../integration/outbox/cart-events.repository';
 import { SourceGateway } from '../../../../integration/recovery/source.gateway';
 import { ProjectionRecoveryService } from '../../../../integration/recovery/projection-recovery.service';
-import {
-  AddCartItemDto,
-  CartScopeDto,
-  CloseOwnerDto,
-  RemoveCartItemDto,
-  SetCartItemDto,
-} from '../controller/dto/cart.dto';
+import { AddCartItemDto } from '../controller/dto/add-cart-item.dto';
+import { CartScopeDto } from '../controller/dto/cart-scope.dto';
+import { CloseOwnerDto } from '../controller/dto/close-owner.dto';
+import { RemoveCartItemDto } from '../controller/dto/remove-cart-item.dto';
+import { SetCartItemDto } from '../controller/dto/set-cart-item.dto';
 import { CartRow } from '../entity/cart-row.entity';
 import { CartCommandRepository } from '../repository/cart-command.repository';
 import { CartQueryRepository } from '../repository/cart-query.repository';

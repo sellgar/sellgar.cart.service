@@ -6,18 +6,17 @@ import { lockOwner } from '../../../../common/database';
 import { requestHash } from '../../../../common/request-hash';
 import { CartEventsRepository } from '../../../../integration/outbox/cart-events.repository';
 import { ProjectionRecoveryService } from '../../../../integration/recovery/projection-recovery.service';
-import { CartCheckoutDto, PrepareCartDto } from '../controller/dto/cart.dto';
+import { CartCheckoutDto } from '../controller/dto/cart-checkout.dto';
+import { PrepareCartDto } from '../controller/dto/prepare-cart.dto';
+import { CartCheckoutEntity } from '../entity/cart-checkout.entity';
+import { CartCheckoutRow } from '../entity/cart-checkout-row.entity';
+import { CheckoutEvent } from '../enum/checkout-event.enum';
+import { CheckoutStatus } from '../enum/checkout-status.enum';
 import { CartCommandRepository } from '../repository/cart-command.repository';
 import { CartQueryRepository } from '../repository/cart-query.repository';
 import { CartRepository } from '../repository/cart.repository';
 import { cartItemView } from './cart-availability';
-
-type CheckoutRow = {
-  checkout_uuid: string;
-  cart_uuid: string;
-  status: 'prepared' | 'completed' | 'cancelled';
-  request_hash: string | null;
-};
+import { CheckoutStateMachine } from './checkout-state-machine';
 
 @Injectable()
 export class CartCheckoutService {
@@ -28,25 +27,27 @@ export class CartCheckoutService {
     private readonly events: CartEventsRepository,
     private readonly config: ConfigService,
     private readonly recovery: ProjectionRecoveryService,
+    private readonly states: CheckoutStateMachine,
   ) {}
 
-  prepare(input: PrepareCartDto) {
+  prepare(input: PrepareCartDto): Promise<CartCheckoutEntity> {
     const hash = requestHash({
       ownerUuid: input.ownerUuid,
       shopUuid: input.shopUuid,
       cartUuid: input.cartUuid,
       items: [...input.items].sort((a, b) => a.recordUuid.localeCompare(b.recordUuid)),
     });
-    return this.commands.execute(
+    return this.commands.execute<CartCheckoutEntity>(
       'cart.checkout.prepare',
       input,
       async (manager) => {
         const cart = await this.carts.byUuid(manager, input, input.cartUuid, false);
         const existing = await this.existing(manager, input);
+        const status = this.states.transition(existing?.status ?? null, CheckoutEvent.PREPARE);
         if (existing) {
           if (existing.request_hash !== null && existing.request_hash !== hash)
             throw new ConflictException('Checkout preparation has different contents');
-          return { checkoutUuid: input.checkoutUuid, cartUuid: cart.uuid, status: existing.status };
+          return { checkoutUuid: input.checkoutUuid, cartUuid: cart.uuid, status };
         }
 
         for (const item of input.items) {
@@ -68,8 +69,8 @@ export class CartCheckoutService {
         }
 
         await manager.query(
-          "INSERT INTO cart_checkouts(checkout_uuid,cart_uuid,request_hash,status) VALUES ($1,$2,$3,'prepared')",
-          [input.checkoutUuid, cart.uuid, hash],
+          'INSERT INTO cart_checkouts(checkout_uuid,cart_uuid,request_hash,status) VALUES ($1,$2,$3,$4)',
+          [input.checkoutUuid, cart.uuid, hash, status],
         );
         const next = await this.carts.advance(manager, cart);
         await manager.query(
@@ -77,7 +78,7 @@ export class CartCheckoutService {
           [cart.uuid, input.checkoutUuid, next.version, input.items.map((i) => i.recordUuid)],
         );
         await this.events.changed(manager, next);
-        return { checkoutUuid: input.checkoutUuid, cartUuid: cart.uuid, status: 'prepared' };
+        return { checkoutUuid: input.checkoutUuid, cartUuid: cart.uuid, status };
       },
       async (manager) => {
         await lockOwner(manager, input.ownerUuid);
@@ -87,31 +88,30 @@ export class CartCheckoutService {
   }
 
   complete(input: CartCheckoutDto) {
-    return this.finish(input, 'completed');
+    return this.finish(input, CheckoutEvent.COMPLETE);
   }
 
   cancel(input: CartCheckoutDto) {
-    return this.finish(input, 'cancelled');
+    return this.finish(input, CheckoutEvent.CANCEL);
   }
 
-  private finish(input: CartCheckoutDto, outcome: 'completed' | 'cancelled') {
-    return this.commands.execute(
+  private finish(input: CartCheckoutDto, event: CheckoutEvent.COMPLETE | CheckoutEvent.CANCEL) {
+    const outcome = event === CheckoutEvent.COMPLETE ? CheckoutStatus.COMPLETED : CheckoutStatus.CANCELLED;
+    return this.commands.execute<CartCheckoutEntity>(
       `cart.checkout.${outcome}`,
       input,
       async (manager) => {
         const cart = await this.carts.byUuid(manager, input, input.cartUuid, true);
         const existing = await this.existing(manager, input);
+        this.states.transition(existing?.status ?? null, event);
         if (existing?.status === outcome)
           return { checkoutUuid: input.checkoutUuid, cartUuid: cart.uuid, status: outcome };
-        if (existing && existing.status !== 'prepared')
-          throw new ConflictException('Checkout has another terminal outcome');
-        if (!existing && outcome === 'completed') throw new ConflictException('Checkout was not prepared');
 
         if (!existing) {
           // A cancellation tombstone prevents a delayed prepare from locking rows.
           await manager.query(
-            "INSERT INTO cart_checkouts(checkout_uuid,cart_uuid,status,finished_at) VALUES ($1,$2,'cancelled',now())",
-            [input.checkoutUuid, cart.uuid],
+            'INSERT INTO cart_checkouts(checkout_uuid,cart_uuid,status,finished_at) VALUES ($1,$2,$3,now())',
+            [input.checkoutUuid, cart.uuid, outcome],
           );
         } else {
           const next = await this.carts.advance(manager, cart);
@@ -138,10 +138,14 @@ export class CartCheckoutService {
     );
   }
 
-  private async existing(manager: EntityManager, input: CartCheckoutDto): Promise<CheckoutRow | undefined> {
-    const [row]: CheckoutRow[] = await manager.query('SELECT * FROM cart_checkouts WHERE checkout_uuid=$1', [
-      input.checkoutUuid,
-    ]);
+  private async existing(
+    manager: EntityManager,
+    input: Pick<CartCheckoutDto, 'checkoutUuid' | 'cartUuid'>,
+  ): Promise<CartCheckoutRow | undefined> {
+    const [row]: CartCheckoutRow[] = await manager.query(
+      'SELECT * FROM cart_checkouts WHERE checkout_uuid=$1',
+      [input.checkoutUuid],
+    );
     if (row && row.cart_uuid !== input.cartUuid)
       throw new ConflictException('Checkout belongs to another cart');
     return row;
